@@ -1,3 +1,9 @@
+//
+//  GarminWatchState.swift
+//  Trio
+//
+//  Created by Cengiz Deniz on 25.01.25.
+//
 import Foundation
 import SwiftUI
 
@@ -7,8 +13,13 @@ import SwiftUI
 /// Uses the SwissAlpine xDrip+ compatible data format.
 /// Sent as an array where the first entry contains all extended data fields.
 struct GarminWatchState: Hashable, Equatable, Sendable, Encodable {
-    /// Timestamp of the glucose reading in milliseconds since Unix epoch
+    /// Timestamp of the enacted loop determination in milliseconds since Unix epoch
+    /// Shows when the loop actually executed, used to indicate loop staleness
     var date: UInt64?
+
+    /// Timestamp of the glucose reading in milliseconds since Unix epoch
+    /// Used by watchface to determine glucose freshness for coloring logic
+    var glucoseDate: UInt64?
 
     /// Sensor glucose value in raw mg/dL (no unit conversion applied)
     var sgv: Int16?
@@ -55,6 +66,7 @@ struct GarminWatchState: Hashable, Equatable, Sendable, Encodable {
 
     static func == (lhs: GarminWatchState, rhs: GarminWatchState) -> Bool {
         lhs.date == rhs.date &&
+            lhs.glucoseDate == rhs.glucoseDate &&
             lhs.sgv == rhs.sgv &&
             lhs.delta == rhs.delta &&
             lhs.direction == rhs.direction &&
@@ -72,6 +84,7 @@ struct GarminWatchState: Hashable, Equatable, Sendable, Encodable {
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(date)
+        hasher.combine(glucoseDate)
         hasher.combine(sgv)
         hasher.combine(delta)
         hasher.combine(direction)
@@ -89,6 +102,7 @@ struct GarminWatchState: Hashable, Equatable, Sendable, Encodable {
 
     enum CodingKeys: String, CodingKey {
         case date
+        case glucoseDate
         case sgv
         case delta
         case direction
@@ -105,20 +119,23 @@ struct GarminWatchState: Hashable, Equatable, Sendable, Encodable {
     }
 
     /// Custom encoding that excludes nil values from the JSON output
+    /// Double values are rounded to 2 decimal places to prevent floating point artifacts
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encodeIfPresent(date, forKey: .date)
+        try container.encodeIfPresent(glucoseDate, forKey: .glucoseDate)
         try container.encodeIfPresent(sgv, forKey: .sgv)
         try container.encodeIfPresent(delta, forKey: .delta)
         try container.encodeIfPresent(direction, forKey: .direction)
         try container.encodeIfPresent(noise, forKey: .noise)
         try container.encodeIfPresent(units_hint, forKey: .units_hint)
-        try container.encodeIfPresent(iob, forKey: .iob)
-        try container.encodeIfPresent(tbr, forKey: .tbr)
+        // Round Double values to 2 decimal places to prevent floating point artifacts like "0.5600000000000001"
+        try container.encodeIfPresent(iob?.roundedDouble(toPlaces: 2), forKey: .iob)
+        try container.encodeIfPresent(tbr?.roundedDouble(toPlaces: 2), forKey: .tbr)
         try container.encodeIfPresent(cob, forKey: .cob)
         try container.encodeIfPresent(eventualBG, forKey: .eventualBG)
         try container.encodeIfPresent(isf, forKey: .isf)
-        try container.encodeIfPresent(sensRatio, forKey: .sensRatio)
+        try container.encodeIfPresent(sensRatio?.roundedDouble(toPlaces: 2), forKey: .sensRatio)
         try container.encodeIfPresent(displayPrimaryAttributeChoice, forKey: .displayPrimaryAttributeChoice)
         try container.encodeIfPresent(displaySecondaryAttributeChoice, forKey: .displaySecondaryAttributeChoice)
     }
