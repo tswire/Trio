@@ -103,13 +103,6 @@ final class BaseGarminManager: NSObject, GarminManager, Injectable {
         debug(.watchManager, message)
     }
 
-    // MARK: - Device Ready State (SDK 1.8+)
-
-    /// Tracks which devices have completed characteristic discovery and are ready for communication.
-    /// In SDK 1.8+, `deviceStatusChanged: connected` does NOT mean the device is ready.
-    /// We must wait for `deviceCharacteristicsDiscovered:` before sending messages.
-    private var readyDevices: Set<UUID> = []
-
     // MARK: - Deduplication
 
     /// Hash of last sent data to prevent duplicate broadcasts
@@ -719,10 +712,6 @@ final class BaseGarminManager: NSObject, GarminManager, Injectable {
         // Without this, hash deduplication could skip sending to new apps if data unchanged
         lastSentDataHash = nil
 
-        // Note: Do NOT clear readyDevices here. The device ready state is based on BLE
-        // characteristic discovery, which only happens on new connections. Re-registering
-        // for app messages doesn't affect the underlying BLE connection state.
-
         for device in devices {
             connectIQ?.register(forDeviceEvents: device, delegate: self)
 
@@ -781,7 +770,8 @@ final class BaseGarminManager: NSObject, GarminManager, Injectable {
             }
 
             /// Shared simulated device UUID for consistency across the app
-            static let simulatedUUID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+            static let simulatedUUID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")
+                ?? UUID()
 
             /// Creates the standard simulated Enduro 3 device
             static func createSimulated() -> MockIQDevice {
@@ -855,13 +845,11 @@ final class BaseGarminManager: NSObject, GarminManager, Injectable {
         }
 
         watchApps.forEach { app in
-            let appName = self.appDisplayName(for: app.uuid!)
-
-            // Check if device is ready (SDK 1.8+ requirement)
-            guard let device = app.device, readyDevices.contains(device.uuid) else {
-                debugGarmin("Garmin: Skipping \(appName) - device not ready")
+            guard let appUUID = app.uuid else {
+                debug(.watchManager, "Garmin: Skipping app with undefined UUID")
                 return
             }
+            let appName = self.appDisplayName(for: appUUID)
 
             connectIQ?.getAppStatus(app) { [weak self] status in
                 guard status?.isInstalled == true else {
@@ -964,43 +952,25 @@ extension BaseGarminManager: IQUIOverrideDelegate, IQDeviceEventDelegate, IQAppM
     // MARK: - IQDeviceEventDelegate
 
     /// Called whenever the status of a registered Garmin device changes (e.g., connected, not found, etc.).
-    /// Note: In SDK 1.8+, `connected` does NOT mean ready for communication.
-    /// Wait for `deviceCharacteristicsDiscovered:` before sending messages.
     /// - Parameters:
     ///   - device: The device whose status has changed.
     ///   - status: The new status for the device.
-    func deviceStatusChanged(_ device: IQDevice, status: IQDeviceStatus) {
+    func deviceStatusChanged(_: IQDevice, status: IQDeviceStatus) {
         // Always log connection state changes - critical for diagnosing SDK issues
         switch status {
         case .invalidDevice:
             debug(.watchManager, "Garmin: Device status -> invalidDevice")
-            readyDevices.remove(device.uuid)
         case .bluetoothNotReady:
             debug(.watchManager, "Garmin: Device status -> bluetoothNotReady")
-            readyDevices.remove(device.uuid)
         case .notFound:
             debug(.watchManager, "Garmin: Device status -> notFound")
-            readyDevices.remove(device.uuid)
         case .notConnected:
             debug(.watchManager, "Garmin: Device status -> notConnected")
-            readyDevices.remove(device.uuid)
         case .connected:
-            debug(.watchManager, "Garmin: Device status -> connected (waiting for characteristics)")
+            debug(.watchManager, "Garmin: Device status -> connected")
         @unknown default:
             debug(.watchManager, "Garmin: Device status -> unknown(\(status.rawValue))")
         }
-    }
-
-    /// Called when device characteristics are discovered and the device is ready for communication.
-    /// This is required in SDK 1.8+ - sending before this callback may fail.
-    /// - Parameter device: The device whose characteristics have been discovered.
-    func deviceCharacteristicsDiscovered(_ device: IQDevice) {
-        debug(.watchManager, "Garmin: Device characteristics discovered - ready for communication")
-        readyDevices.insert(device.uuid)
-
-        // Trigger a data send now that device is ready
-        // This ensures newly connected devices get data promptly
-        triggerWatchStateUpdate(triggeredBy: "DeviceReady")
     }
 
     // MARK: - IQAppMessageDelegate
@@ -1012,7 +982,11 @@ extension BaseGarminManager: IQUIOverrideDelegate, IQDeviceEventDelegate, IQAppM
     ///   - message: The message content from the watch app.
     ///   - app: The watch app sending the message.
     func receivedMessage(_ message: Any, from app: IQApp) {
-        let appName = appDisplayName(for: app.uuid!)
+        guard let appUUID = app.uuid else {
+            debug(.watchManager, "Garmin: Received message from app with undefined UUID - ignoring")
+            return
+        }
+        let appName = appDisplayName(for: appUUID)
         debugGarmin("Garmin: Received message '\(message)' from \(appName)")
 
         // If watch requests status update, send current data via unified path
