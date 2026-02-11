@@ -10037,7 +10037,6 @@
       }
     },
     "%lld h" : {
-      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -261800,6 +261799,12 @@
       }
     },
     "Watch/Carplay Widget Style" : {
+
+    },
+    "Watchface Selection" : {
+
+    },
+    "Watchface Settings" : {
 
     },
     "We recommend reviewing them carefully — Trio will guide you step-by-step." : {
